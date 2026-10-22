@@ -10,11 +10,14 @@ langsmith>=0.1.0
 qdrant-client>=1.9.0
 langchain-qdrant>=0.2.0
 
+# Groq LLM (Free, fast serverless inference)
+langchain-groq>=0.2.0
+groq>=0.11.0
+
 # LLM / Embeddings
 huggingface_hub>=0.24.0
 sentence-transformers>=3.0.0
 tokenizers>=0.19.0
-torchvision>=0.18.0
 
 # Data processing
 pandas>=2.0.0

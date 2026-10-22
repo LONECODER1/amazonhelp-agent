@@ -21,7 +21,7 @@ def get_qdrant_client():
 
     # 1. Qdrant Cloud URL + API Key
     if QDRANT_URL:
-        return QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
+        return QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=60.0)
 
     # 2. Local Disk fallback or explicit local setting
     if os.getenv("USE_LOCAL_QDRANT", "true").lower() == "true":

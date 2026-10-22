@@ -36,7 +36,7 @@ DATA_PATH = PROJECT_ROOT / "data" / "sample_amazon_dataset.csv"
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "amazon_support")
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
-BATCH_SIZE = 100  # upsert in batches to avoid timeouts
+BATCH_SIZE = 50  # 50 docs per batch to avoid HTTP keep-alive timeouts on cloud clusters
 
 
 from langsmith import traceable
@@ -45,6 +45,7 @@ from langsmith import traceable
 @traceable(name="run_ingestion", tags=["ingestion", "qdrant"], metadata={"component": "data_indexer"})
 def run_ingestion():
     """Full ingestion pipeline: load → chunk → embed → upsert to Qdrant."""
+    import time
     from langchain_community.document_loaders import CSVLoader
     from langchain_text_splitters import RecursiveCharacterTextSplitter
     from langchain_qdrant import QdrantVectorStore
@@ -54,18 +55,39 @@ def run_ingestion():
     from src.utils.vector_store import (
         QDRANT_HOST,
         QDRANT_PORT,
-        collection_exists,
         get_qdrant_client,
     )
 
-    # ── 1. Check if already ingested ─────────────────────────────────────────
-    if collection_exists():
+    client = get_qdrant_client()
+
+    # ── 1. Check if already ingested or partially ingested ───────────────────
+    force_recreate = "--force" in sys.argv or "--recreate" in sys.argv
+
+    try:
+        info = client.get_collection(QDRANT_COLLECTION)
+        existing_points = getattr(info, "points_count", 0) or getattr(info, "vectors_count", 0) or 0
+    except Exception:
+        existing_points = 0
+
+    if existing_points >= 3000 and not force_recreate:
         logger.info(
-            "Collection '%s' already contains vectors. Skipping ingestion. "
-            "Delete the collection manually in Qdrant to re-ingest.",
+            "Collection '%s' already contains %d vectors (complete). Skipping ingestion. "
+            "Pass --force to re-ingest.",
             QDRANT_COLLECTION,
+            existing_points,
         )
         return
+
+    if 0 < existing_points < 3000 or force_recreate:
+        logger.warning(
+            "Collection '%s' has %d points (incomplete). Deleting and recreating for clean ingestion.",
+            QDRANT_COLLECTION,
+            existing_points,
+        )
+        try:
+            client.delete_collection(QDRANT_COLLECTION)
+        except Exception as e:
+            logger.warning("Could not delete existing collection: %s", e)
 
     # ── 2. Load CSV ───────────────────────────────────────────────────────────
     logger.info("Loading CSV from: %s", DATA_PATH)
@@ -88,7 +110,6 @@ def run_ingestion():
 
     # ── 4. Create collection if not exists ────────────────────────────────────
     embeddings = get_embeddings()
-    client = get_qdrant_client()
 
     # Determine embedding dimension from a test embed
     logger.info("Resolving embedding dimension…")
@@ -119,7 +140,23 @@ def run_ingestion():
         batch = chunks[i : i + BATCH_SIZE]
         batch_num = i // BATCH_SIZE + 1
         logger.info("Batch %d / %d (%d docs)…", batch_num, total_batches, len(batch))
-        vector_store.add_documents(documents=batch)
+
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                vector_store.add_documents(documents=batch)
+                break
+            except Exception as e:
+                logger.warning(
+                    "Batch %d attempt %d failed with error (%s). Retrying in %ds…",
+                    batch_num,
+                    attempt,
+                    e,
+                    attempt * 2,
+                )
+                if attempt == max_retries:
+                    raise
+                time.sleep(attempt * 2)
 
     # Verify
     info = client.get_collection(QDRANT_COLLECTION)
@@ -133,3 +170,4 @@ def run_ingestion():
 
 if __name__ == "__main__":
     run_ingestion()
+
