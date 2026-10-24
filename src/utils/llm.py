@@ -14,6 +14,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+try:
+    import streamlit as st
+    if hasattr(st, "secrets"):
+        for k, v in st.secrets.items():
+            if k not in os.environ and isinstance(v, (str, int, float, bool)):
+                os.environ[k] = str(v)
+except Exception:
+    pass
+
 logger = logging.getLogger(__name__)
 
 # ── API Keys ──────────────────────────────────────────────────────────────────

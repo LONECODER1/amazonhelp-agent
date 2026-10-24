@@ -18,6 +18,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Sync Streamlit Cloud secrets to os.environ so all os.getenv calls across the project work
+try:
+    if hasattr(st, "secrets"):
+        for k, v in st.secrets.items():
+            if isinstance(v, (str, int, float, bool)):
+                os.environ[k] = str(v)
+except Exception:
+    pass
+
 # ── Page config (must be first Streamlit call) ────────────────────────────────
 st.set_page_config(
     page_title="AmazonHelp AI Agent",
